@@ -231,6 +231,9 @@ def _morph_key() -> str:
     return os.environ.get("MORPH_API_KEY", "").strip()
 
 
+_LAST_MORPH_USAGE: dict = {}
+
+
 def morph_compact(text: str, query: str | None, settings) -> str | None:
     """Compact text via native POST /v1/compact. Returns compacted text or None."""
     key = _morph_key()
@@ -257,13 +260,32 @@ def morph_compact(text: str, query: str | None, settings) -> str | None:
     except Exception as exc:
         logger.warning("ctx-prune: morph call failed: %s", type(exc).__name__)
         return None
+    # Record the provider's own accounting so the log proves what happened.
+    try:
+        _LAST_MORPH_USAGE.clear()
+        usage = data.get("usage") or {}
+        _LAST_MORPH_USAGE.update({
+            "morph_in_tokens": usage.get("input_tokens"),
+            "morph_out_tokens": usage.get("output_tokens"),
+            "morph_ratio": usage.get("compression_ratio"),
+            "morph_ms": usage.get("processing_time_ms"),
+        })
+    except Exception:
+        pass
     out = data.get("output")
-    if isinstance(out, str) and out.strip():
-        return out
-    msgs = data.get("messages") or []
-    parts = [m.get("content", "") for m in msgs if isinstance(m, dict)]
-    joined = "\n".join(p for p in parts if p)
-    return joined or None
+    if not (isinstance(out, str) and out.strip()):
+        msgs = data.get("messages") or []
+        parts = [m.get("content", "") for m in msgs if isinstance(m, dict)]
+        joined = "\n".join(p for p in parts if p)
+        out = joined or None
+    if out is None:
+        return None
+    # Guard: never report a prune that did not actually shrink the payload.
+    if len(out) >= len(text):
+        logger.info("ctx-prune: no reduction (%d -> %d chars), keeping original",
+                    len(text), len(out))
+        return None
+    return out
 
 
 # ---------------------------------------------------------------- hook
@@ -314,6 +336,7 @@ def on_transform_tool_result(**kwargs):
         tool_name = str(kwargs.get("tool_name") or "")
         query = kwargs.get("user_message") or kwargs.get("goal")
         query = str(query)[:500] if query else None
+        _LAST_MORPH_USAGE.clear()  # never leak a previous call's usage into this event
         t0 = time.time()
         replacement = prune_tool_result(result, tool_name, query, st)
         dt = time.time() - t0
@@ -334,6 +357,7 @@ def on_transform_tool_result(**kwargs):
             "out_chars": len(replacement) if replacement else 0,
             "protected_lines": protected,
             "duration_s": round(dt, 3),
+            **_LAST_MORPH_USAGE,
         }, st)
         return replacement  # None = untouched (fail-open)
     except Exception as exc:

@@ -114,3 +114,37 @@ def test_get_config_path_enables_mode():
 def test_mode_absent_defaults_off():
     ctx = _FakeCtx({})
     assert ctx_prune._settings(ctx)["mode"] == "off"
+
+
+def test_no_reduction_guard():
+    """A replacement that does not shrink the payload must be rejected."""
+    import json as _json
+    big = "x" * 20000
+    calls = {"n": 0}
+
+    class _Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b""
+        def __iter__(self): return iter([])
+
+    import urllib.request as _u
+    orig_urlopen = _u.urlopen
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+
+        class R:
+            def __init__(self, data): self._d = data
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return self._d
+        # Morph returns the same length: must be treated as no-op
+        return R(_json.dumps({"output": big, "usage": {"input_tokens": 1, "output_tokens": 1}}).encode())
+
+    _u.urlopen = fake_urlopen
+    try:
+        out = ctx_prune.morph_compact(big, "q", _st())
+    finally:
+        _u.urlopen = orig_urlopen
+    assert out is None, "identical-length output must be rejected as no-reduction"
