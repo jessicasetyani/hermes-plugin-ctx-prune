@@ -152,3 +152,31 @@ def test_no_reduction_guard():
     finally:
         _u.urlopen = orig_urlopen
     assert out is None, "identical-length output must be rejected as no-reduction"
+
+
+def test_envelope_unwrapped_before_compaction():
+    """Hermes hands tool results JSON-serialised: one line, escaped \\n.
+
+    Morph cannot trim a single-line payload, so the envelope must be unwrapped
+    and the inner text compacted (regression: live session 20261013_213327).
+    """
+    import json as _json
+    inner = "\n".join(f"svc=billing worker={i%8} batch={i} rows=500 status=ok" for i in range(400))
+    envelope = _json.dumps({"output": inner, "exit_code": 0})
+    seen = {}
+
+    def fake_compact(text, query, settings):
+        seen["text"] = text
+        return "COMPACTED"
+
+    orig = ctx_prune.morph_compact
+    ctx_prune.morph_compact = fake_compact
+    try:
+        out = ctx_prune.prune_tool_result(envelope, "terminal", "q", _st(oversize_tokens=2000))
+    finally:
+        ctx_prune.morph_compact = orig
+    # Morph must receive real multi-line text, not the JSON blob
+    assert "\n" in seen.get("text", "") and not seen["text"].startswith('{"output"')
+    assert out is not None
+    rebuilt = _json.loads(out)
+    assert rebuilt["output"] == "COMPACTED" and rebuilt["exit_code"] == 0

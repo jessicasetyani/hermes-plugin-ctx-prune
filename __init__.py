@@ -204,7 +204,22 @@ def wrap_protected_lines(text: str, pattern: str) -> tuple[str, int]:
     return "\n".join(out), kept
 
 
-# ---------------------------------------------------------------- morph client
+def _unwrap_envelope(result: str) -> dict | None:
+    """Return the tool-result envelope as a dict, or None when it is plain text.
+
+    Hermes hands tool results to hooks JSON-serialised, e.g.
+    ``{"output": "line1\\nline2..."}`` — ONE physical line with escaped \\n.
+    Morph deletes whole lines, so a single-line payload cannot be compacted
+    ("results will be poor" / input returned unchanged). Unwrap first.
+    """
+    stripped = result.strip()
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return None
+    try:
+        data = json.loads(stripped)
+    except (ValueError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
 
 def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
@@ -316,6 +331,27 @@ def prune_tool_result(result: str, tool_name: str = "", query: str | None = None
         return None
     if tool_name.lower() in settings["skip_tools"]:
         return None
+
+    envelope = _unwrap_envelope(result)
+    if envelope is not None:
+        # Envelope path: compact each long text field, keep every other key.
+        threshold = settings["oversize_tokens"]
+        targets = [k for k, v in envelope.items()
+                   if isinstance(v, str) and _estimate_tokens(v) >= threshold]
+        if not targets:
+            return None
+        compacted = dict(envelope)
+        shrunk = False
+        for key in targets:
+            new_val = morph_compact(envelope[key], query, settings)
+            if new_val is not None:
+                compacted[key] = new_val
+                shrunk = True
+        if not shrunk:
+            return None
+        rebuilt = json.dumps(compacted, ensure_ascii=False)
+        return rebuilt if len(rebuilt) < len(result) else None
+
     if _estimate_tokens(result) < settings["oversize_tokens"]:
         return None
     return morph_compact(result, query, settings)

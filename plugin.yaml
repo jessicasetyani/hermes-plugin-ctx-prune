@@ -1,5 +1,5 @@
 name: ctx-prune
-version: "0.4.1"
+version: "0.5.0"
 requires_hermes: ">=0.21.5"
 description: "Layer-1 context pruning via Morph Compact (transform_tool_result). Oversized tool outputs are compacted through POST /v1/compact before entering model context. Fail-open; kill switch is mode: off."
 author: "Ali Naga Saputra / Hermes Agent"

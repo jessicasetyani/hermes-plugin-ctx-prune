@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 — 13 Oct 2026
+- Fix (root cause found from a captured live payload): Hermes hands tool results
+  to hooks JSON-serialised — `{"output": "line1\nline2..."}`, one physical line
+  with escaped newlines. Morph deletes whole lines, so a single-line payload was
+  returned unchanged (ratio 0.999) and never pruned. The envelope is now unwrapped,
+  the inner text compacted, and the envelope rebuilt with all other keys intact.
+- Verified on the failing live payload: 25,868 -> 10,814 chars (ratio 0.418),
+  protected (ERROR) line kept, exit_code preserved.
+
 ## 0.4.1 — 13 Oct 2026
 - Anomaly capture: when Morph returns a non-shrinking payload, the exact input
   and output are written to `~/.hermes/logs/ctx-prune-anomaly/` for diagnosis
