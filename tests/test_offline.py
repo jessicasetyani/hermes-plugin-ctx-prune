@@ -92,3 +92,25 @@ def test_normalize_mode_coercion():
     assert n("on") == "on" and n("OFF") == "off"
     assert n("auto") == "auto" and n("yes") == "on"
     assert n("") == "off" and n(None) == "off"
+
+
+class _FakeCtx:
+    """Mimics the real plugin ctx: get_config(key, default)."""
+
+    def __init__(self, cfg):
+        self._cfg = cfg
+
+    def get_config(self, key, default=None):
+        return self._cfg.get(key, default)
+
+
+def test_get_config_path_enables_mode():
+    ctx = _FakeCtx({"mode": True, "log_enabled": False})
+    st = ctx_prune._settings(ctx)
+    assert st["mode"] == "on", st["mode"]
+    assert ctx_prune._disabled(st, ctx) is False
+
+
+def test_mode_absent_defaults_off():
+    ctx = _FakeCtx({})
+    assert ctx_prune._settings(ctx)["mode"] == "off"

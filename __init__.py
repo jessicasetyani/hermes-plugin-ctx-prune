@@ -46,14 +46,22 @@ _DEFAULTS = {
 
 
 def _from_ctx(ctx, key, default):
+    """Read one plugin setting. Mirrors jev-suggest: ctx.get_config(key, default)."""
     if ctx is None:
         return os.environ.get("CTX_PRUNE_" + key.upper(), default)
     try:
-        cfg = ctx.config("ctx-prune") if hasattr(ctx, "config") else None
+        val = ctx.get_config(key, default)
+        if val is not None and val != "":
+            return val
     except Exception:
-        cfg = None
-    if isinstance(cfg, dict) and key in cfg:
-        return cfg[key]
+        pass
+    # Fallback: some wiring exposes the whole settings dict instead.
+    try:
+        cfg = ctx.config("ctx-prune") if hasattr(ctx, "config") else None
+        if isinstance(cfg, dict) and key in cfg:
+            return cfg[key]
+    except Exception:
+        pass
     return os.environ.get("CTX_PRUNE_" + key.upper(), default)
 
 
@@ -264,6 +272,21 @@ def prune_tool_result(result: str, tool_name: str = "", query: str | None = None
     return morph_compact(result, query, settings)
 
 
+def _skip_reason(result: str, tool_name: str, settings) -> str | None:
+    """Why this result was left alone — for the event log."""
+    if settings.get("mode") == "off":
+        return "mode_off"
+    if settings.get("mode") not in ("on", "auto"):
+        return "mode_invalid"
+    if settings.get("mode") == "auto" and not _morph_key():
+        return "no_key"
+    if tool_name.lower() in settings.get("skip_tools", set()):
+        return "skip_tool"
+    if _estimate_tokens(result) < settings.get("oversize_tokens", 2000):
+        return "below_threshold"
+    return None
+
+
 def on_transform_tool_result(**kwargs):
     """Hook entry. Return a replacement string, or None to keep the original."""
     try:
@@ -278,13 +301,19 @@ def on_transform_tool_result(**kwargs):
         replacement = prune_tool_result(result, tool_name, query, st)
         dt = time.time() - t0
         _, protected = wrap_protected_lines(result, st.get("protect_patterns", ""))
+        reason = None if replacement is not None else (
+            _skip_reason(result, tool_name, st) or "morph_returned_none"
+        )
         _log_event({
             "event": "prune",
             "session_id": str(kwargs.get("session_id") or ""),
             "turn_id": str(kwargs.get("turn_id") or ""),
             "tool": tool_name,
+            "mode": st.get("mode"),
             "in_chars": len(result),
+            "in_tokens_est": _estimate_tokens(result),
             "pruned": replacement is not None,
+            "reason": reason,
             "out_chars": len(replacement) if replacement else 0,
             "protected_lines": protected,
             "duration_s": round(dt, 3),
