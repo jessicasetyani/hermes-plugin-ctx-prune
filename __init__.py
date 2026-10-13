@@ -64,11 +64,23 @@ def _num_from_ctx(ctx, key, default, cast):
         return default
 
 
+def _normalize_mode(raw) -> str:
+    """Coercion-proof: YAML turns unquoted on/off/yes/no into booleans."""
+    if isinstance(raw, bool):
+        return "on" if raw else "off"
+    s = str(raw or "").strip().lower()
+    if s in ("on", "true", "yes", "1", "enabled"):
+        return "on"
+    if s in ("auto",):
+        return "auto"
+    return "off"
+
+
 def _settings(ctx=None):
     c = ctx if ctx is not None else _CTX
     skip = str(_from_ctx(c, "skip_tools", "") or "")
     return {
-        "mode": str(_from_ctx(c, "mode", "off") or "off").lower(),
+        "mode": _normalize_mode(_from_ctx(c, "mode", "off")),
         "oversize_tokens": _num_from_ctx(c, "oversize_tokens", 2000, int),
         "compression_ratio": _num_from_ctx(c, "compression_ratio", 0.4, float),
         "timeout_s": _num_from_ctx(c, "timeout_s", 30.0, float),

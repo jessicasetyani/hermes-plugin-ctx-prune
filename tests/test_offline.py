@@ -84,3 +84,11 @@ def test_wrap_bad_regex_fails_open():
 def test_wrap_empty_pattern_noop():
     wrapped, kept = ctx_prune.wrap_protected_lines("a\nb", "")
     assert (wrapped, kept) == ("a\nb", 0)
+
+
+def test_normalize_mode_coercion():
+    n = ctx_prune._normalize_mode
+    assert n(True) == "on" and n(False) == "off"
+    assert n("on") == "on" and n("OFF") == "off"
+    assert n("auto") == "auto" and n("yes") == "on"
+    assert n("") == "off" and n(None) == "off"
