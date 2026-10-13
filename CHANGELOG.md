@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 — 13 Oct 2026
+- Anomaly capture: when Morph returns a non-shrinking payload, the exact input
+  and output are written to `~/.hermes/logs/ctx-prune-anomaly/` for diagnosis
+
 ## 0.4.0 — 13 Oct 2026
 - Fix: reject any replacement that does not shrink the payload (a "pruned: true" with equal in/out chars is now a no-op with an explicit reason)
 - Log Morph's own accounting per event: `morph_in_tokens`, `morph_out_tokens`, `morph_ratio`, `morph_ms`

@@ -284,6 +284,16 @@ def morph_compact(text: str, query: str | None, settings) -> str | None:
     if len(out) >= len(text):
         logger.info("ctx-prune: no reduction (%d -> %d chars), keeping original",
                     len(text), len(out))
+        # Capture the exact payload pair so the anomaly can be diagnosed from
+        # evidence instead of guesswork (bounded, one file per occurrence).
+        try:
+            d = _hermes_home() / "logs" / "ctx-prune-anomaly"
+            d.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%dT%H%M%S", time.localtime())
+            (d / f"anomaly-{stamp}-in.txt").write_text(text, encoding="utf-8")
+            (d / f"anomaly-{stamp}-out.txt").write_text(out, encoding="utf-8")
+        except OSError:
+            pass
         return None
     return out
 
