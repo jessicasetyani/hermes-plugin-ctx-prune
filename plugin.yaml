@@ -34,6 +34,10 @@ config_schema:
     type: str
     default: ""
     description: "Comma-separated tool names never pruned (e.g. skill,clarify)"
+  protect_patterns:
+    type: str
+    default: "ERROR|Error|error|FAIL|Exception|Traceback|OOMKilled|TODO|FIXME|SECRET|PASSWORD|API_KEY"
+    description: "Pipe-separated regex: matching lines are wrapped in <keepContext> tags so Morph preserves them verbatim"
   log_enabled:
     type: str
     default: "true"

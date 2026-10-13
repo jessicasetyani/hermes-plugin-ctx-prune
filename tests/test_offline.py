@@ -66,3 +66,21 @@ if __name__ == "__main__":
     for name, fn in sorted({k: v for k, v in globals().items() if k.startswith("test_")}.items()):
         fn()
         print("PASS", name)
+
+
+def test_wrap_protected_lines():
+    text = "ok line\nERROR boom happened\nTraceback detail\nok again"
+    wrapped, kept = ctx_prune.wrap_protected_lines(text, "ERROR|Traceback")
+    assert kept == 2
+    assert "<keepContext>\nERROR boom happened\nTraceback detail\n</keepContext>" in wrapped
+    assert "ok line\n" in wrapped and wrapped.endswith("ok again")
+
+
+def test_wrap_bad_regex_fails_open():
+    wrapped, kept = ctx_prune.wrap_protected_lines("some text", "([invalid")
+    assert (wrapped, kept) == ("some text", 0)
+
+
+def test_wrap_empty_pattern_noop():
+    wrapped, kept = ctx_prune.wrap_protected_lines("a\nb", "")
+    assert (wrapped, kept) == ("a\nb", 0)

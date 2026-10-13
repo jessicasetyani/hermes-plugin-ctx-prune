@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import urllib.request
 from pathlib import Path
@@ -36,6 +37,7 @@ _DEFAULTS = {
     "timeout_s": 30.0,
     "morph_base_url": "https://api.morphllm.com/v1",
     "skip_tools": "",
+    "protect_patterns": "ERROR|Error|error|FAIL|Exception|Traceback|OOMKilled|TODO|FIXME|SECRET|PASSWORD|API_KEY",
     "log_enabled": "true",
     "log_max_bytes": 5242880,
     "log_keep_files": 10,
@@ -72,6 +74,7 @@ def _settings(ctx=None):
         "timeout_s": _num_from_ctx(c, "timeout_s", 30.0, float),
         "morph_base_url": str(_from_ctx(c, "morph_base_url", _DEFAULTS["morph_base_url"]) or _DEFAULTS["morph_base_url"]).rstrip("/"),
         "skip_tools": {t.strip().lower() for t in skip.split(",") if t.strip()},
+        "protect_patterns": str(_from_ctx(c, "protect_patterns", _DEFAULTS["protect_patterns"]) or ""),
         "log_enabled": _from_ctx(c, "log_enabled", "true"),
         "log_max_bytes": _num_from_ctx(c, "log_max_bytes", 5242880, int),
         "log_keep_files": _num_from_ctx(c, "log_keep_files", 10, int),
@@ -148,6 +151,39 @@ def _log_event(ev: dict, settings) -> None:
         pass
 
 
+# ---------------------------------------------------------------- keepContext
+
+def wrap_protected_lines(text: str, pattern: str) -> tuple[str, int]:
+    """Wrap lines matching pattern in <keepContext> tags (own line, same message).
+
+    Contiguous matching lines share one tag pair. Tags are stripped from Morph
+    output; wrapped content survives verbatim and counts against the ratio budget.
+    Returns (wrapped_text, protected_line_count).
+    """
+    if not pattern:
+        return text, 0
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        logger.warning("ctx-prune: bad protect_patterns regex, ignoring")
+        return text, 0
+    out, in_block, kept = [], False, 0
+    for line in text.splitlines():
+        hit = bool(rx.search(line))
+        if hit and not in_block:
+            out.append("<keepContext>")
+            in_block = True
+        if not hit and in_block:
+            out.append("</keepContext>")
+            in_block = False
+        if hit:
+            kept += 1
+        out.append(line)
+    if in_block:
+        out.append("</keepContext>")
+    return "\n".join(out), kept
+
+
 # ---------------------------------------------------------------- morph client
 
 def _estimate_tokens(text: str) -> int:
@@ -163,8 +199,9 @@ def morph_compact(text: str, query: str | None, settings) -> str | None:
     key = _morph_key()
     if not key:
         return None
+    guarded, kept = wrap_protected_lines(text, settings.get("protect_patterns", ""))
     body = {
-        "input": text,
+        "input": guarded,
         "compression_ratio": settings["compression_ratio"],
         "preserve_recent": 0,  # single tool output: no "recent messages" concept
         "include_markers": True,
@@ -228,6 +265,7 @@ def on_transform_tool_result(**kwargs):
         t0 = time.time()
         replacement = prune_tool_result(result, tool_name, query, st)
         dt = time.time() - t0
+        _, protected = wrap_protected_lines(result, st.get("protect_patterns", ""))
         _log_event({
             "event": "prune",
             "session_id": str(kwargs.get("session_id") or ""),
@@ -236,6 +274,7 @@ def on_transform_tool_result(**kwargs):
             "in_chars": len(result),
             "pruned": replacement is not None,
             "out_chars": len(replacement) if replacement else 0,
+            "protected_lines": protected,
             "duration_s": round(dt, 3),
         }, st)
         return replacement  # None = untouched (fail-open)
