@@ -41,3 +41,17 @@ Key comes from shell env (`MORPH_API_KEY` in `~/.zshrc`) — never in config.
 
 Missing key, timeout, HTTP error, any exception → hook returns `None`,
 original tool result passes through. Never blocks a turn.
+
+## Disclosure (catalog rule 13)
+
+- **Network calls to a third-party service:** every pruned tool output is sent
+  to `api.morphllm.com` (Morph) — content leaves the machine. Tool outputs
+  under `oversize_tokens` are never sent. To keep everything local, leave
+  `mode` off or point `morph_base_url` at a self-hosted Morph deployment.
+- **Reads outside the plugin's own data:** none. The plugin reads only its own
+  settings and, for the key, Hermes's own credential route.
+- **Shell commands / background processes:** none.
+- **Stored credentials:** none. The key is read per call from
+  `agent.secret_scope.get_secret("MORPH_API_KEY")`, falling back to the
+  declared `requires_env` variable. No key is written anywhere.
+- **Telemetry:** none.

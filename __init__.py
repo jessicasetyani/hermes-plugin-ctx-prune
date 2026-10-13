@@ -211,7 +211,24 @@ def _estimate_tokens(text: str) -> int:
 
 
 def _morph_key() -> str:
-    return os.environ.get("MORPH_API_KEY", "")
+    """MORPH_API_KEY via Hermes's credential routes only (catalog rule 11).
+
+    Order: agent.secret_scope (profile-aware, sanctioned route), then the
+    declared env var. Never reads .env files or any credential store directly.
+    """
+    try:
+        from agent.secret_scope import get_secret  # type: ignore
+    except (ImportError, ModuleNotFoundError):
+        get_secret = None
+    if get_secret is not None:
+        try:
+            key = str(get_secret("MORPH_API_KEY", "") or "").strip()
+            if key:
+                return key
+        except Exception as exc:
+            logger.debug("ctx-prune: secret_scope unavailable: %s", exc)
+    # Declared in requires_env; honored by Hermes's env injection.
+    return os.environ.get("MORPH_API_KEY", "").strip()
 
 
 def morph_compact(text: str, query: str | None, settings) -> str | None:
