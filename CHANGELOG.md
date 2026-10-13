@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0 — 13 Oct 2026
+- Fix: reject any replacement that does not shrink the payload (a "pruned: true" with equal in/out chars is now a no-op with an explicit reason)
+- Log Morph's own accounting per event: `morph_in_tokens`, `morph_out_tokens`, `morph_ratio`, `morph_ms`
+- Usage no longer leaks between events
+
 ## 0.3.0 — 13 Oct 2026
 - Fix: settings read via `ctx.get_config(key, default)` — mode was silently "off"
 - Event log now records `mode`, `in_tokens_est`, and `reason` (mode_off / below_threshold / no_key / morph_returned_none)
