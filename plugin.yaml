@@ -1,0 +1,52 @@
+name: ctx-prune
+version: "0.1.0"
+description: "Layer-1 context pruning via Morph Compact (transform_tool_result). Oversized tool outputs are compacted through POST /v1/compact before entering model context. Fail-open; kill switch is mode: off."
+author: "Ali Naga Saputra / Hermes Agent"
+provides_hooks:
+  - transform_tool_result
+requires_env:
+  - name: MORPH_API_KEY
+    description: "Morph API key (comes from shell env, e.g. ~/.zshrc — never in config)"
+    required: false
+    password: true
+config_schema:
+  mode:
+    type: str
+    default: "off"
+    description: "off | auto (prune when MORPH_API_KEY is present) | on"
+  oversize_tokens:
+    type: int
+    default: 2000
+    description: "Tool results above this estimated token count are compacted"
+  compression_ratio:
+    type: float
+    default: 0.4
+    description: "Fraction of the tool output to keep (Morph compression_ratio)"
+  timeout_s:
+    type: float
+    default: 30.0
+    description: "Seconds per Morph /v1/compact call; on timeout the original result passes through"
+  morph_base_url:
+    type: str
+    default: "https://api.morphllm.com/v1"
+    description: "Morph API base URL"
+  skip_tools:
+    type: str
+    default: ""
+    description: "Comma-separated tool names never pruned (e.g. skill,clarify)"
+  log_enabled:
+    type: str
+    default: "true"
+    description: "Write the structured event log (true/false; off disables all log writes)"
+  log_max_bytes:
+    type: int
+    default: 5242880
+    description: "Rotate the event log at this size (bytes); 0 disables rotation"
+  log_keep_files:
+    type: int
+    default: 10
+    description: "Rotated logs kept (oldest deleted first); 0 keeps everything"
+  log_retention_days:
+    type: int
+    default: 30
+    description: "Delete rotated logs older than this; 0 keeps forever"
