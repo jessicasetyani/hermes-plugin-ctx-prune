@@ -1,7 +1,11 @@
 """Offline tests for ctx-prune Layer 1. No network: morph_compact is stubbed."""
+import os
 import sys
+import tempfile
 from pathlib import Path
 
+# Keep test artifacts (e.g. anomaly captures) out of the real ~/.hermes.
+os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="ctx-prune-test-")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import __init__ as ctx_prune  # noqa: E402
 
