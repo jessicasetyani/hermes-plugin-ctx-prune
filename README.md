@@ -22,6 +22,28 @@ The aux-compression slot (`auxiliary.compression`) must NOT use this model:
 proven 13 Oct 2026 that `morph-compactor` deletes lines instead of writing
 Hermes's rewrite-style summary — aux stays on a summarizer model.
 
+## Install
+
+```bash
+hermes plugins install jessicasetyani/hermes-plugin-ctx-prune --enable
+```
+
+This is the only supported install path — it records git provenance with a
+pinned commit, which is what makes updates work. Do NOT `cp -r` the repo into
+`~/.hermes/plugins/`: a manual copy has provenance `manual` and can never be
+updated.
+
+After install: add `MORPH_API_KEY` to your shell env (e.g. `~/.zshrc`), set the
+`plugins.ctx-prune` block in `config.yaml` (see Config), then `/reset` —
+plugins take effect on the next session, never mid-conversation.
+
+Updates:
+
+```bash
+hermes plugins check-updates    # poll for new commits
+hermes plugins update ctx-prune # pull, re-validate, then /reset
+```
+
 ## Config (per profile, config.yaml)
 
 ```yaml
