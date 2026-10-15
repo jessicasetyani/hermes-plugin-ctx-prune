@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 — 15 Oct 2026
+- Marginal-gain guard (Layer 1b): refuse a compaction whose output keeps at
+  least `max_keep_ratio` (default 0.90) of the input tokens, reason
+  `marginal_gain`. Motivated by the 13-15 Oct live log: 7 of 134 accepted
+  prunes had ratio > 0.9 (worst 0.988, 6574 -> 5747 tokens) — each spent a
+  ~370 ms Morph call and API spend for a near-no-op. Set `max_keep_ratio: 0`
+  to disable. `max_keep_ratio` is also read from the environment as
+  `CTX_PRUNE_MAX_KEEP_RATIO` via the standard settings path.
+
 ## 0.6.0 — 15 Oct 2026
 - Fix (root cause found from captured live payloads): Morph Compact deletes whole
   LINES only — it never trims inside a line — so a minified JSON payload (one

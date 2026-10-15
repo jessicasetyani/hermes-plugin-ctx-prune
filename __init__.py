@@ -104,6 +104,7 @@ def _settings(ctx=None):
         "log_keep_files": _num_from_ctx(c, "log_keep_files", 10, int),
         "log_retention_days": _num_from_ctx(c, "log_retention_days", 30, int),
         "min_keep_ratio": _num_from_ctx(c, "min_keep_ratio", 0.10, float),
+        "max_keep_ratio": _num_from_ctx(c, "max_keep_ratio", 0.90, float),
         "min_keep_tokens": _num_from_ctx(c, "min_keep_tokens", 200, int),
         "min_lines": _num_from_ctx(c, "min_lines", 8, int),
         "marker_min_chars": _num_from_ctx(c, "marker_min_chars", 120, int),
@@ -319,6 +320,12 @@ def _guard_reason(out: str, in_text: str, settings) -> str | None:
         floor_tokens = 0
     if out_tok < max(floor_tokens, int(ratio * in_tok)):
         return "below_keep_floor"
+    try:
+        max_keep = float(settings.get("max_keep_ratio", 0.90) or 0.0)
+    except (TypeError, ValueError):
+        max_keep = 0.0
+    if max_keep > 0 and in_tok > 0 and out_tok >= int(max_keep * in_tok):
+        return "marginal_gain"
     try:
         min_chars = int(settings.get("marker_min_chars", 120) or 120)
     except (TypeError, ValueError):

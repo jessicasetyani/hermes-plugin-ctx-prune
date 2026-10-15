@@ -1,7 +1,7 @@
 name: ctx-prune
-version: "0.6.0"
+version: "0.7.0"
 requires_hermes: ">=0.21.5"
-description: "Layer-1 context pruning via Morph Compact (transform_tool_result). Oversized tool outputs are compacted through POST /v1/compact before entering model context. Fail-open; kill switch is mode: off. Guards: line-starved payloads are never sent (single-line JSON is de-minified first, anything else is skipped), and any compaction keeping less than min_keep_ratio of the input, or made only of provider markers, is refused."
+description: "Layer-1 context pruning via Morph Compact (transform_tool_result). Oversized tool outputs are compacted through POST /v1/compact before entering model context. Fail-open; kill switch is mode: off. Guards: line-starved payloads are never sent (single-line JSON is de-minified first, anything else is skipped), and any compaction keeping less than min_keep_ratio of the input, or made only of provider markers, or keeps at least max_keep_ratio of the input (marginal gain), is refused."
 author: "Ali Naga Saputra / Hermes Agent"
 provides_hooks:
   - transform_tool_result
@@ -59,6 +59,10 @@ config_schema:
     type: float
     default: 0.10
     description: "Layer-1 floor: refuse a compaction whose output keeps less than this fraction of the input tokens"
+  max_keep_ratio:
+    type: float
+    default: 0.90
+    description: "Marginal-gain guard: refuse a compaction whose output keeps at least this fraction of the input tokens (0 disables); such prunes cost a Morph call for near-nothing"
   min_keep_tokens:
     type: int
     default: 200

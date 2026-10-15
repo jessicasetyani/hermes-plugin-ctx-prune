@@ -144,7 +144,7 @@ def test_real_compaction_still_applies():
 
 def test_guard_settings_are_declared():
     st = ctx_prune._settings(None)
-    for key in ("min_keep_ratio", "min_keep_tokens", "min_lines", "marker_min_chars"):
+    for key in ("min_keep_ratio", "max_keep_ratio", "min_keep_tokens", "min_lines", "marker_min_chars"):
         assert key in st, f"{key} missing from settings"
     assert ctx_prune._DEFAULTS["min_keep_ratio"] == 0.10
     assert ctx_prune._DEFAULTS["min_keep_tokens"] == 200
@@ -154,3 +154,27 @@ if __name__ == "__main__":
     for name, fn in sorted({k: v for k, v in globals().items() if k.startswith("test_")}.items()):
         fn()
         print("PASS", name)
+
+
+# ------------------------------------------------------------------ Layer 1b
+
+def test_marginal_gain_output_is_refused():
+    # Output keeps >= max_keep_ratio (0.90) of the input tokens: real content,
+    # real shrink, but not worth a Morph call (~370 ms) for a ~1% reduction.
+    out = "y" * 9200  # ~2300 tok of a 10000-char (~2500 tok) input
+    assert ctx_prune._guard_reason(out, "x" * 10000, _st()) == "marginal_gain"
+
+
+def test_marginal_gain_just_below_threshold_passes():
+    out = "y" * 8800  # ~2200 tok = 0.88 of input
+    assert ctx_prune._guard_reason(out, "x" * 10000, _st()) is None
+
+
+def test_marginal_gain_can_be_disabled():
+    st = _st(max_keep_ratio=0)
+    out = "y" * 9900
+    assert ctx_prune._guard_reason(out, "x" * 10000, st) is None
+
+
+def test_marginal_gain_does_not_catch_legitimate_prunes():
+    assert ctx_prune._guard_reason("y" * 4000, "x" * 10000, _st()) is None
