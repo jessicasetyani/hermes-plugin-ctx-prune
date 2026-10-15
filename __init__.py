@@ -42,6 +42,10 @@ _DEFAULTS = {
     "log_max_bytes": 5242880,
     "log_keep_files": 10,
     "log_retention_days": 30,
+    "min_keep_ratio": 0.10,
+    "min_keep_tokens": 200,
+    "min_lines": 8,
+    "marker_min_chars": 120,
 }
 
 
@@ -99,6 +103,10 @@ def _settings(ctx=None):
         "log_max_bytes": _num_from_ctx(c, "log_max_bytes", 5242880, int),
         "log_keep_files": _num_from_ctx(c, "log_keep_files", 10, int),
         "log_retention_days": _num_from_ctx(c, "log_retention_days", 30, int),
+        "min_keep_ratio": _num_from_ctx(c, "min_keep_ratio", 0.10, float),
+        "min_keep_tokens": _num_from_ctx(c, "min_keep_tokens", 200, int),
+        "min_lines": _num_from_ctx(c, "min_lines", 8, int),
+        "marker_min_chars": _num_from_ctx(c, "marker_min_chars", 120, int),
     }
 
 
@@ -225,6 +233,101 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+# ---------------------------------------------------------------- guards
+
+# Provider bookkeeping emitted by Morph Compact. Anything left after these are
+# stripped is real content; if nothing is left, the "compaction" was a wipe.
+_FILTERED_MARKER = re.compile(r"\((?:filtered|compacted)\s+\d+\s+lines?\)")
+_KEEP_TAG = re.compile(r"</?keepContext>")
+
+
+def _line_starved(text: str, settings) -> bool:
+    """True when the payload is too line-poor for line-deletion compaction.
+
+    Morph Compact removes whole LINES — it never trims inside a line. A
+    minified JSON blob is one physical line, so there is nothing to delete
+    selectively and the entire payload is dropped. Documented in
+    docs.morphllm.com/sdk/components/compact.
+    """
+    if not text:
+        return True
+    try:
+        min_lines = int(settings.get("min_lines", 8) or 8)
+    except (TypeError, ValueError):
+        min_lines = 8
+    return len(text.splitlines()) < min_lines
+
+
+def _prepare_input(text: str, settings):
+    """Layer 0: return a compactable form of text, or None to skip pruning.
+
+    Minified JSON is re-serialised with newlines (lossless: identical data,
+    far more lines) so Morph has something to delete. Any other line-starved
+    payload is skipped — fail-open cannot lose content, sending it can.
+    """
+    if not _line_starved(text, settings):
+        return text
+    try:
+        obj = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    try:
+        # indent=0 = one JSON element per line, no padding: identical line
+        # count to indent=1 at ~1/5 of the size growth (Morph bills input).
+        return json.dumps(obj, indent=0, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return None
+
+
+def _strip_markers(text: str) -> str:
+    """Remove the provider's own bookkeeping so only real content remains."""
+    return _KEEP_TAG.sub("", _FILTERED_MARKER.sub("", text))
+
+
+def _has_substance(out: str, min_chars: int) -> bool:
+    """Layer 2: the output must carry real content, not only markers."""
+    return len("".join(_strip_markers(out).split())) >= max(1, int(min_chars))
+
+
+def _count_filtered(text: str) -> int:
+    """Layer 3: total of the provider's own '(filtered N lines)' accounting."""
+    total = 0
+    for m in _FILTERED_MARKER.finditer(text):
+        digits = re.search(r"\d+", m.group(0))
+        if digits:
+            total += int(digits.group(0))
+    return total
+
+
+def _guard_reason(out: str, in_text: str, settings) -> str | None:
+    """Layers 1-2: why this compaction must be refused, or None if it is OK.
+
+    Layer 1 floor — a replacement that keeps almost none of the input is a
+    content wipe wearing the costume of a successful prune.
+    Layer 2 substance — an output that is only provider markers carries no
+    information even when a ratio check on a small input would pass.
+    """
+    in_tok = _estimate_tokens(in_text)
+    out_tok = _estimate_tokens(out)
+    try:
+        ratio = float(settings.get("min_keep_ratio", 0.10) or 0.0)
+    except (TypeError, ValueError):
+        ratio = 0.0
+    try:
+        floor_tokens = int(settings.get("min_keep_tokens", 200) or 0)
+    except (TypeError, ValueError):
+        floor_tokens = 0
+    if out_tok < max(floor_tokens, int(ratio * in_tok)):
+        return "below_keep_floor"
+    try:
+        min_chars = int(settings.get("marker_min_chars", 120) or 120)
+    except (TypeError, ValueError):
+        min_chars = 120
+    if not _has_substance(out, min_chars):
+        return "marker_only"
+    return None
+
+
 def _morph_key() -> str:
     """MORPH_API_KEY via Hermes's credential routes only (catalog rule 11).
 
@@ -247,6 +350,27 @@ def _morph_key() -> str:
 
 
 _LAST_MORPH_USAGE: dict = {}
+_LAST_GUARD_REASON: str | None = None
+
+
+def _dump_anomaly(text: str, out: str) -> None:
+    """Capture the exact payload pair so an anomaly is diagnosed from
+    evidence instead of guesswork (bounded, one file per occurrence)."""
+    try:
+        d = _hermes_home() / "logs" / "ctx-prune-anomaly"
+        d.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%dT%H%M%S", time.localtime())
+        (d / f"anomaly-{stamp}-in.txt").write_text(text, encoding="utf-8")
+        (d / f"anomaly-{stamp}-out.txt").write_text(out, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _reject(reason: str):
+    """Record why a compaction was refused, then fail open (return None)."""
+    global _LAST_GUARD_REASON
+    _LAST_GUARD_REASON = reason
+    return None
 
 
 def morph_compact(text: str, query: str | None, settings) -> str | None:
@@ -254,7 +378,15 @@ def morph_compact(text: str, query: str | None, settings) -> str | None:
     key = _morph_key()
     if not key:
         return None
-    guarded, kept = wrap_protected_lines(text, settings.get("protect_patterns", ""))
+    # Layer 0: only line-rich payloads are compactable (Morph deletes whole
+    # lines). Minified JSON is re-serialised with newlines; any other
+    # line-starved payload is skipped rather than sent to be wiped.
+    prepared = _prepare_input(text, settings)
+    if prepared is None:
+        logger.info("ctx-prune: line-starved non-JSON payload (%d chars), "
+                    "skipping prune", len(text))
+        return _reject("uncompactable_single_line")
+    guarded, kept = wrap_protected_lines(prepared, settings.get("protect_patterns", ""))
     body = {
         "input": guarded,
         "compression_ratio": settings["compression_ratio"],
@@ -296,20 +428,20 @@ def morph_compact(text: str, query: str | None, settings) -> str | None:
     if out is None:
         return None
     # Guard: never report a prune that did not actually shrink the payload.
+    # Compared against the ORIGINAL text, not the de-minified `prepared` form:
+    # the replacement must be smaller than what the model would have received.
     if len(out) >= len(text):
         logger.info("ctx-prune: no reduction (%d -> %d chars), keeping original",
                     len(text), len(out))
-        # Capture the exact payload pair so the anomaly can be diagnosed from
-        # evidence instead of guesswork (bounded, one file per occurrence).
-        try:
-            d = _hermes_home() / "logs" / "ctx-prune-anomaly"
-            d.mkdir(parents=True, exist_ok=True)
-            stamp = time.strftime("%Y%m%dT%H%M%S", time.localtime())
-            (d / f"anomaly-{stamp}-in.txt").write_text(text, encoding="utf-8")
-            (d / f"anomaly-{stamp}-out.txt").write_text(out, encoding="utf-8")
-        except OSError:
-            pass
+        _dump_anomaly(text, out)
         return None
+    # Layers 1-2: shorter is not the same as good.
+    reason = _guard_reason(out, text, settings)
+    if reason is not None:
+        logger.warning("ctx-prune: refused compaction (%s) %d -> %d chars, "
+                       "keeping original", reason, len(text), len(out))
+        _dump_anomaly(text, out)
+        return _reject(reason)
     return out
 
 
@@ -326,12 +458,14 @@ def _disabled(settings, ctx) -> bool:
 def prune_tool_result(result: str, tool_name: str = "", query: str | None = None,
                        settings=None) -> str | None:
     """Pure core: returns compacted replacement, or None to leave untouched."""
+    global _LAST_GUARD_REASON
     settings = settings or _settings()
     if _disabled(settings, _CTX):
         return None
     if tool_name.lower() in settings["skip_tools"]:
         return None
 
+    _LAST_GUARD_REASON = None
     envelope = _unwrap_envelope(result)
     if envelope is not None:
         # Envelope path: compact each long text field, keep every other key.
@@ -339,7 +473,7 @@ def prune_tool_result(result: str, tool_name: str = "", query: str | None = None
         targets = [k for k, v in envelope.items()
                    if isinstance(v, str) and _estimate_tokens(v) >= threshold]
         if not targets:
-            return None
+            return _reject("no_oversize_field")
         compacted = dict(envelope)
         shrunk = False
         for key in targets:
@@ -348,9 +482,9 @@ def prune_tool_result(result: str, tool_name: str = "", query: str | None = None
                 compacted[key] = new_val
                 shrunk = True
         if not shrunk:
-            return None
+            return None  # every field refused: fail open, reason already set
         rebuilt = json.dumps(compacted, ensure_ascii=False)
-        return rebuilt if len(rebuilt) < len(result) else None
+        return rebuilt if len(rebuilt) < len(result) else _reject("no_reduction")
 
     if _estimate_tokens(result) < settings["oversize_tokens"]:
         return None
@@ -388,7 +522,9 @@ def on_transform_tool_result(**kwargs):
         dt = time.time() - t0
         _, protected = wrap_protected_lines(result, st.get("protect_patterns", ""))
         reason = None if replacement is not None else (
-            _skip_reason(result, tool_name, st) or "morph_returned_none"
+            _skip_reason(result, tool_name, st)
+            or _LAST_GUARD_REASON
+            or "morph_returned_none"
         )
         _log_event({
             "event": "prune",
@@ -403,6 +539,9 @@ def on_transform_tool_result(**kwargs):
             "out_chars": len(replacement) if replacement else 0,
             "protected_lines": protected,
             "duration_s": round(dt, 3),
+            "lines_in": len(result.splitlines()),
+            "lines_out": len(replacement.splitlines()) if replacement else 0,
+            "lines_filtered": _count_filtered(replacement) if replacement else 0,
             **_LAST_MORPH_USAGE,
         }, st)
         return replacement  # None = untouched (fail-open)

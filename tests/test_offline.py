@@ -121,9 +121,13 @@ def test_mode_absent_defaults_off():
 
 
 def test_no_reduction_guard():
-    """A replacement that does not shrink the payload must be rejected."""
+    """A replacement that does not shrink the payload must be rejected.
+
+    Multi-line on purpose: a single-line payload is now refused earlier by the
+    Layer-0 starvation check, which would mask the path under test.
+    """
     import json as _json
-    big = "x" * 20000
+    big = "x\n" * 10000
     calls = {"n": 0}
 
     class _Resp:

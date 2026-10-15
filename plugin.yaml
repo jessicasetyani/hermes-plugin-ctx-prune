@@ -1,7 +1,7 @@
 name: ctx-prune
-version: "0.5.0"
+version: "0.6.0"
 requires_hermes: ">=0.21.5"
-description: "Layer-1 context pruning via Morph Compact (transform_tool_result). Oversized tool outputs are compacted through POST /v1/compact before entering model context. Fail-open; kill switch is mode: off."
+description: "Layer-1 context pruning via Morph Compact (transform_tool_result). Oversized tool outputs are compacted through POST /v1/compact before entering model context. Fail-open; kill switch is mode: off. Guards: line-starved payloads are never sent (single-line JSON is de-minified first, anything else is skipped), and any compaction keeping less than min_keep_ratio of the input, or made only of provider markers, is refused."
 author: "Ali Naga Saputra / Hermes Agent"
 provides_hooks:
   - transform_tool_result
@@ -55,3 +55,19 @@ config_schema:
     type: int
     default: 30
     description: "Delete rotated logs older than this; 0 keeps forever"
+  min_keep_ratio:
+    type: float
+    default: 0.10
+    description: "Layer-1 floor: refuse a compaction whose output keeps less than this fraction of the input tokens"
+  min_keep_tokens:
+    type: int
+    default: 200
+    description: "Absolute floor: refuse a compaction shorter than this many tokens"
+  min_lines:
+    type: int
+    default: 8
+    description: "Payloads with fewer lines than this are line-starved for line-deletion compaction (de-minified if JSON, else skipped)"
+  marker_min_chars:
+    type: int
+    default: 120
+    description: "Layer-2 substance: refuse output whose content (after stripping provider markers) is below this many characters"

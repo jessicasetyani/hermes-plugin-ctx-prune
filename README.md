@@ -55,9 +55,41 @@ plugins:
     timeout_s: 30.0
     skip_tools: ""     # e.g. "skill,clarify"
     log_enabled: "true"   # laptop ON, server OFF (11 Oct convention)
+    min_lines: 8          # below this line count = line-starved (see Guards)
+    min_keep_ratio: 0.10  # refuse a compaction keeping < this fraction of input tokens
+    min_keep_tokens: 200  # absolute floor, in tokens
+    marker_min_chars: 120 # refuse output that is only provider markers
 ```
 
 Key comes from shell env (`MORPH_API_KEY` in `~/.zshrc`) — never in config.
+
+## Guards
+
+Morph Compact removes whole **lines** — it never trims inside a line
+([docs](https://docs.morphllm.com/sdk/components/compact)). A minified JSON
+payload is a single physical line, so there is nothing to delete selectively,
+Morph drops the whole payload, and all that comes back is its own
+`(filtered N lines)` marker. On 14 Oct 2026 that wiped 7 of 66 prunes — including
+a 666,879-char catalog response — each replaced by a 32-byte stub that the old
+"did it get shorter?" check happily accepted as a success.
+
+Three guards stop that before it reaches the model:
+
+- **Layer 0 — precondition.** Line-starved payloads (fewer than `min_lines` lines)
+  are never sent as-is. Single-line JSON is re-serialised with `indent=0` — one
+  element per line, lossless, ~+10% chars — so Morph has lines to delete;
+  any other line-starved payload is **skipped**. Fail-open beats a wipe.
+- **Layer 1 — floor.** A replacement keeping less than
+  `max(min_keep_tokens, min_keep_ratio × in_tokens)` is refused
+  (`below_keep_floor`).
+- **Layer 2 — substance.** Output whose content — after stripping provider
+  markers and `<keepContext>` tags — is shorter than `marker_min_chars` is
+  refused (`marker_only`).
+
+Every refusal returns `None`, so the original result passes through untouched,
+and the in/out pair is dumped to `~/.hermes/logs/ctx-prune-anomaly/`. Each event
+records `lines_in`, `lines_out` and `lines_filtered`, so a destructive no-op is
+visible in the log instead of being counted as a saving.
 
 ## Fails open
 
