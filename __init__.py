@@ -38,7 +38,7 @@ _DEFAULTS = {
     "morph_base_url": "https://api.morphllm.com/v1",
     "skip_tools": "",
     "protect_patterns": "ERROR|Error|error|FAIL|Exception|Traceback|OOMKilled|TODO|FIXME|SECRET|PASSWORD|API_KEY",
-    "log_enabled": "true",
+    "log_enabled": True,
     "log_max_bytes": 5242880,
     "log_keep_files": 10,
     "log_retention_days": 30,
@@ -99,7 +99,7 @@ def _settings(ctx=None):
         "morph_base_url": str(_from_ctx(c, "morph_base_url", _DEFAULTS["morph_base_url"]) or _DEFAULTS["morph_base_url"]).rstrip("/"),
         "skip_tools": {t.strip().lower() for t in skip.split(",") if t.strip()},
         "protect_patterns": str(_from_ctx(c, "protect_patterns", _DEFAULTS["protect_patterns"]) or ""),
-        "log_enabled": _from_ctx(c, "log_enabled", "true"),
+        "log_enabled": _from_ctx(c, "log_enabled", _DEFAULTS["log_enabled"]),
         "log_max_bytes": _num_from_ctx(c, "log_max_bytes", 5242880, int),
         "log_keep_files": _num_from_ctx(c, "log_keep_files", 10, int),
         "log_retention_days": _num_from_ctx(c, "log_retention_days", 30, int),
@@ -358,6 +358,10 @@ def _morph_key() -> str:
 
 _LAST_MORPH_USAGE: dict = {}
 _LAST_GUARD_REASON: str | None = None
+# Lines protected in the text actually sent to Morph. The hook cannot compute
+# this from the raw result: an envelope payload arrives as ONE json line, so
+# re-wrapping it reports 1 even when every rule line was protected.
+_LAST_PROTECTED = 0
 
 
 def _dump_anomaly(text: str, out: str) -> None:
@@ -382,6 +386,7 @@ def _reject(reason: str):
 
 def morph_compact(text: str, query: str | None, settings) -> str | None:
     """Compact text via native POST /v1/compact. Returns compacted text or None."""
+    global _LAST_PROTECTED
     key = _morph_key()
     if not key:
         return None
@@ -394,6 +399,7 @@ def morph_compact(text: str, query: str | None, settings) -> str | None:
                     "skipping prune", len(text))
         return _reject("uncompactable_single_line")
     guarded, kept = wrap_protected_lines(prepared, settings.get("protect_patterns", ""))
+    _LAST_PROTECTED += kept  # per-field: the envelope path calls this once per field
     body = {
         "input": guarded,
         "compression_ratio": settings["compression_ratio"],
@@ -465,7 +471,7 @@ def _disabled(settings, ctx) -> bool:
 def prune_tool_result(result: str, tool_name: str = "", query: str | None = None,
                        settings=None) -> str | None:
     """Pure core: returns compacted replacement, or None to leave untouched."""
-    global _LAST_GUARD_REASON
+    global _LAST_GUARD_REASON, _LAST_PROTECTED
     settings = settings or _settings()
     if _disabled(settings, _CTX):
         return None
@@ -473,6 +479,7 @@ def prune_tool_result(result: str, tool_name: str = "", query: str | None = None
         return None
 
     _LAST_GUARD_REASON = None
+    _LAST_PROTECTED = 0
     envelope = _unwrap_envelope(result)
     if envelope is not None:
         # Envelope path: compact each long text field, keep every other key.
@@ -527,7 +534,10 @@ def on_transform_tool_result(**kwargs):
         t0 = time.time()
         replacement = prune_tool_result(result, tool_name, query, st)
         dt = time.time() - t0
-        _, protected = wrap_protected_lines(result, st.get("protect_patterns", ""))
+        # Report what Morph actually received. For envelope payloads (terminal
+        # results arrive as one json line) wrapping the raw result always says 1.
+        protected = (_LAST_PROTECTED if replacement is not None else
+                     wrap_protected_lines(result, st.get("protect_patterns", ""))[1])
         reason = None if replacement is not None else (
             _skip_reason(result, tool_name, st)
             or _LAST_GUARD_REASON
