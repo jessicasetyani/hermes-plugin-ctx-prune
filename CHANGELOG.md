@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.1 — 28 Oct 2026
+- Fix: `protected_lines` in the event log now reports the line count of the text
+  actually sent to Morph (summed per envelope field) instead of re-wrapping the
+  raw tool result. Terminal results arrive as ONE json line, so the old code
+  logged `1` even when every rule line was protected — measured 28 Oct: a
+  4,000-token payload carrying 20 protected rule lines logged
+  `protected_lines: 1` while the cut stayed at 21.5% (unprotected runs cut ~60%).
+  A counter that under-reports makes working protection look dead, which is
+  worse than no counter at all.
+- Schema: `log_enabled` is declared `bool` (was `str`, which the loader flagged
+  at every start: `should be str (got bool)`), and `mode` declares
+  `choices: [off, auto, on]` so the Plugins hub renders a select instead of a
+  free-text field. Runtime still tolerates either type for `log_enabled`.
+- `_DEFAULTS["log_enabled"]` is now `True` (bool) to match the schema.
+
 ## 0.7.0 — 15 Oct 2026
 - Marginal-gain guard (Layer 1b): refuse a compaction whose output keeps at
   least `max_keep_ratio` (default 0.90) of the input tokens, reason

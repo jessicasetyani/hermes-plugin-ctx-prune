@@ -184,3 +184,31 @@ def test_envelope_unwrapped_before_compaction():
     assert out is not None
     rebuilt = _json.loads(out)
     assert rebuilt["output"] == "COMPACTED" and rebuilt["exit_code"] == 0
+
+
+def test_hook_reports_protected_lines_from_sent_text():
+    """Envelope results arrive as ONE json line, so re-wrapping the raw result
+    always reports 1. The hook must log the count from the text Morph received."""
+    seen = []
+    orig_prune, orig_log = ctx_prune.prune_tool_result, ctx_prune._log_event
+
+    def fake_prune(result, tool_name="", query=None, settings=None):
+        ctx_prune._LAST_PROTECTED = 7
+        return "SHORT"
+
+    ctx_prune.prune_tool_result = fake_prune
+    ctx_prune._log_event = lambda ev, st: seen.append(ev)
+    try:
+        out = ctx_prune.on_transform_tool_result(
+            result="x" * 9000, tool_name="terminal", user_message="q")
+    finally:
+        ctx_prune.prune_tool_result = orig_prune
+        ctx_prune._log_event = orig_log
+    assert out == "SHORT"
+    assert seen and seen[0]["protected_lines"] == 7, "must report the sent-text count"
+
+
+def test_protected_accumulator_resets_per_call():
+    ctx_prune._LAST_PROTECTED = 99
+    assert ctx_prune.prune_tool_result("ok", "terminal", None, _st()) is None
+    assert ctx_prune._LAST_PROTECTED == 0, "a new call must not inherit the previous count"

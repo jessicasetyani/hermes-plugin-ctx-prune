@@ -1,5 +1,5 @@
 name: ctx-prune
-version: "0.7.0"
+version: "0.7.1"
 requires_hermes: ">=0.21.5"
 description: "Layer-1 context pruning via Morph Compact (transform_tool_result). Oversized tool outputs are compacted through POST /v1/compact before entering model context. Fail-open; kill switch is mode: off. Guards: line-starved payloads are never sent (single-line JSON is de-minified first, anything else is skipped), and any compaction keeping less than min_keep_ratio of the input, or made only of provider markers, or keeps at least max_keep_ratio of the input (marginal gain), is refused."
 author: "Ali Naga Saputra / Hermes Agent"
@@ -14,6 +14,7 @@ config_schema:
   mode:
     type: str
     default: "off"
+    choices: ["off", "auto", "on"]
     description: "off | auto (prune when MORPH_API_KEY is present) | on"
   oversize_tokens:
     type: int
@@ -40,8 +41,8 @@ config_schema:
     default: "ERROR|Error|error|FAIL|Exception|Traceback|OOMKilled|TODO|FIXME|SECRET|PASSWORD|API_KEY"
     description: "Pipe-separated regex: matching lines are wrapped in <keepContext> tags so Morph preserves them verbatim"
   log_enabled:
-    type: str
-    default: "true"
+    type: bool
+    default: true
     description: "Write the structured event log (true/false; off disables all log writes)"
   log_max_bytes:
     type: int
